@@ -6,6 +6,7 @@ import 'package:magic_sample/config/erc20_abi.dart';
 import 'package:magic_sdk/magic_sdk.dart';
 import 'package:magic_sdk/provider/rpc_provider.dart';
 import 'package:web3dart/web3dart.dart';
+import 'package:http/http.dart';
 
 class MagicHome extends StatefulWidget {
   const MagicHome({Key? key}) : super(key: key);
@@ -23,27 +24,15 @@ class _MagicHomeState extends State<MagicHome> {
   final myController = TextEditingController(text: 'veerapandi@rage.fan');
   EthereumAddress toEthAddress =
       EthereumAddress.fromHex("0xD5C7df686Cdc0636863b8ac1C08AE8e60Fcafebe");
-
+  String rpcURL =
+      "https://ropsten.infura.io/v3/66b8e081633b4153b9e2600b8e607697";
   @override
   void initState() {
     super.initState();
 
-    provider = magic.user.provider;
-    credent = MagicCredential(provider);
-
     Timer(const Duration(seconds: 1), () {
       setState(() {});
     });
-
-    /// Checks if the user is already loggedIn
-    // var future = magic.user.isLoggedIn();
-    // future.then((isLoggedIn) {
-    //   if (isLoggedIn) {
-    //     /// Navigate to home page
-    //     //   Navigator.push(context,
-    //     //       MaterialPageRoute(builder: (context) => const HomePage()));
-    //   }
-    // });
   }
 
   @override
@@ -200,22 +189,36 @@ class _MagicHomeState extends State<MagicHome> {
   }
 
   sendERC20() async {
-    await credent.getAccount();
+    EtherAmount? gasPrice;
+    var client = Web3Client(rpcURL, Client());
+    try {
+      gasPrice = await client.getGasPrice();
+    } catch (e) {
+      SnackBar snackBar = SnackBar(
+          content: Text('Error in sending ERC20 Token : ${e.toString()}'));
+      ScaffoldMessenger.of(context).showSnackBar(snackBar);
+    }
+
     String abi = ABI.get("erc20");
     DeployedContract contract = DeployedContract(
         ContractAbi.fromJson(abi, "erc20"),
         EthereumAddress.fromHex(contractAddress));
+
     Transaction tx = Transaction.callContract(
         from: credent.address,
         contract: contract,
         function: contract.function("transfer"),
+        gasPrice: gasPrice,
         parameters: [
           toEthAddress,
           EtherAmount.fromUnitAndValue(EtherUnit.ether, 1).getInWei
         ]);
-    if (tx.data == null) return;
+    var gas = await client.estimateGas(
+        sender: credent.address, to: toEthAddress, data: tx.data);
+    var newTx = tx.copyWith(maxGas: gas.toInt());
+    if (newTx.data == null) return;
     try {
-      var txb = await credent.sendTransaction(tx);
+      var txb = await credent.sendTransaction(newTx);
       SnackBar snackBar =
           SnackBar(content: Text('ERC20 Tx Hash : ${txb.toString()}'));
       ScaffoldMessenger.of(context).showSnackBar(snackBar);
@@ -251,7 +254,11 @@ class _MagicHomeState extends State<MagicHome> {
 
   Future<bool> checkSession() async {
     try {
-      return await magic.user.isLoggedIn();
+      var status = await magic.user.isLoggedIn();
+      provider = magic.user.provider;
+      credent = MagicCredential(provider);
+      await credent.getAccount();
+      return status;
     } catch (e) {
       return false;
     }
